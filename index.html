@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Toronto Bike Share Web Map</title>
+    <link rel="shortcut icon" href="#">
+    <link rel="stylesheet" href="css/leaflet.css">
+    <script src="js/leaflet.js"></script>
+	<script src="js/leaflet.rotatedMarker.js"></script>
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+    <style>
+        body {
+            padding: 0;
+            margin: 0;
+        }
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+        }
+		.description {
+    		width: 250px;
+    		font-size: 16px;
+    		color: #333333;
+    		font-family: "Open Sans", Helvetica, sans-serif;
+    		padding: 10px 14px;
+    		background-color: rgba(245,245,220,0.8);
+    		box-shadow: 0 0 15px rgba(0,0,0,0.2);
+    		border-radius: 5px;
+    		border: 1px solid grey;
+		}
+		.dropdown {
+            min-width: 15em;
+            padding: 5px 10px 10px 10px;
+            background-color: rgba(255,255,255,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }
+        .dropdown h3 {
+            margin: 5px 0px 0px 0px;
+        }
+        #route {
+            width: 100%;
+            padding: 6px 8px;
+            font: 14px/16px Arial, Helvetica, sans-serif;
+            background-color: rgba(255,255,255,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }
+    </style>
+    <!---disables unwanted scaling of the page when on mobile devices--->
+    <meta name="viewport" content="width=device-width, 
+        initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+	let osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'});
+	let imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'});
+	let dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+		attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+		subdomains: 'abcd',
+	})
+
+	let map = L.map('map', {center: [43.708563, -79.308769], zoom: 12, layers: [osm]});
+	
+	// add a legend control for route
+	let legend = L.control({position: "topleft"});
+		legend.onAdd = function() {
+    let div = L.DomUtil.create("div", "dropdown");
+    div.innerHTML = 
+        '<h3>Route</h3>' +
+        '<select id="route"></select><br>'
+    return div;
+	};
+	legend.addTo(map);
+
+	function parseXml(xml)
+	{
+		let gj = {
+			"name":"TTC Buses",
+			"type":"FeatureCollection",
+			"features":[]
+		};
+
+		$(xml).find("vehicle").each(function()
+		{
+			gj.features.push({"type": "Feature",
+									"geometry":{
+										"type": "Point", 
+										"coordinates": [$(this).attr("lon")*1, $(this).attr("lat")*1]},
+									"properties":{
+										"ID": $(this).attr("id"),
+										"Route": $(this).attr("routeTag"),
+										"Heading": $(this).attr("heading"),
+										"Speed": $(this).attr("speedKmHr"),
+										"Updated": $(this).attr("secsSinceReport")
+						}
+			});
+		});
+
+		return gj
+	}
+
+	function get_ttc() {
+		ttc.clearLayers();
+		fetch("https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&t=0")
+		.then(function(response) {
+			return response.text();
+		})
+		.then (function(xmlString) {
+			return $.parseXML(xmlString)
+		})
+		.then(function(xml) {
+			return parseXml(xml)
+		})
+		.then(function(data) {
+			L.geoJSON(data, {
+				filter: routeFilter,
+				pointToLayer: function(geojson_point, latlng) {
+					return L.marker(latlng, {
+						icon: arrow,
+						rotationAngle: geojson_point.properties.Heading
+					});
+				},
+				onEachFeature: function(feature, layer) {
+					layer.bindPopup(
+						'<div class="popup">' + 
+						'Vehicle ID: ' + feature.properties.ID + "<br>" +
+						'Route: ' + feature.properties.Route + "<br>" +
+						'Heading: ' + feature.properties.Heading + "<br>" +
+						'Speed(km/h): ' + feature.properties.Speed + "<br>" +
+						'Last Updated(seconds): ' + feature.properties.Updated + "<br>" +
+						'</div>'
+					);
+				}
+			}).addTo(ttc)
+		});
+	}
+
+	// route filter function
+	function routeFilter(feature) {
+		if (document.getElementById("route").value === "All") {
+			return true
+		} else if (feature.properties.Route === document.getElementById("route").value) {
+			return true
+		}
+	}
+
+	// Update route dropdown menu
+	fetch("https://webservices.umoiq.com/service/publicXMLFeed?command=vehicleLocations&a=ttc&t=0")
+		.then(function(response) {
+			return response.text();
+		})
+		.then (function(xmlString) {
+			return $.parseXML(xmlString)
+		})
+		.then(function(xml) {
+			return parseXml(xml)
+		})
+		.then(
+			function(gj) {
+				let route = document.getElementById("route").value;
+				let html = "<option>All</option>";
+				let array = []
+				gj.features.forEach(function(element) {
+					array.push(element.properties.Route)
+				});
+
+				array = [...new Set(array)]
+				array = array.sort()
+				array.forEach(function(element){
+						html += "<option>" + element + "</option>"
+					}
+				)
+				document.getElementById("route").innerHTML = html;
+				document.getElementById("route").addEventListener("change", get_ttc);
+			}
+		)
+
+	let ttc = L.layerGroup();
+
+	let arrow = L.icon({
+		iconUrl: './css/images/arrow.svg',
+		iconSize: [17, 17]
+		});
+
+	// make initial display
+	get_ttc()
+
+	ttc.addTo(map)
+
+	// update every 60 seconds
+	setInterval(get_ttc, 60000);
+
+	// add layer control
+	let baseMaps = {
+		"Dark OSM": dark,
+		"OSM": osm,
+		"Imagery": imagery
+	};
+
+	let overlay = {
+		"TTC Real Time Vehicle Locations": ttc
+	}
+
+	let layerControl = L.control.layers(baseMaps, overlay, {position: "topleft", collapsed: true}).addTo(map);
+
+	// add map title and description
+	let description = L.control({position: "topright"});
+	description.onAdd = function() {
+		let div = L.DomUtil.create("div", "description");
+		div.innerHTML = 
+			'<p><b>Toronto Transit Commission Vehicle Real Time Locations</b></p><hr>' +
+			'<p>This web map displays real-time information of each Toronto Transit Commission (TTC) vehicle. The map updates every minute at most.</p>' +
+			'<a href="https://zehuiyin.github.io/">Zehui Yin</a> <br>' +
+			'Created with the <i>Leaflet</i> library, <i>OpenStreetMap</i>, and <i>UMO Public XML Feed</i><br>'
+		return div;
+	};
+	description.addTo(map);
+
+	// add data source
+	let data_source = L.control({position: "bottomleft"});
+	data_source.onAdd = function() {
+		let div = L.DomUtil.create("div", "data_source");
+		div.innerHTML = 
+			'Data Source: Toronto Transit Commission, UMO'
+		return div;
+	};
+	data_source.addTo(map);
+	
+    </script>
+</body>
+</html>
